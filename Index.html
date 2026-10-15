@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="th" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบแดชบอร์ดข้อมูลผู้เสียชีวิตจากอุบัติเหตุทางถนน (Real-Time Monitoring)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkBg: '#0b0f19',
+                        cardBg: '#131d31',
+                        cardBorder: '#1e293b',
+                        accentRed: '#ef4444',
+                        accentYellow: '#f59e0b',
+                        accentBlue: '#3b82f6'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts: Inter & Prompt -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Prompt', 'Inter', sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #0b0f19; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #334155; }
+        /* Dark map popup overrides */
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+            background-color: #131d31 !important;
+            color: #f8fafc !important;
+            border: 1px solid #1e293b;
+            border-radius: 0.75rem;
+        }
+        .leaflet-container { font-family: 'Prompt', sans-serif; }
+    </style>
+</head>
+<body class="bg-darkBg text-slate-100 min-h-screen flex flex-col custom-scrollbar">
+
+    <!-- Header -->
+    <header class="bg-cardBg border-b border-cardBorder sticky top-0 z-50 px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div class="flex items-center space-x-3">
+            <div class="bg-red-500/10 border border-red-500/30 p-2.5 rounded-xl text-red-500 flex items-center justify-center">
+                <i class="fa-solid fa-triangle-exclamation text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold tracking-wide flex items-center gap-2">
+                    <span>Road Accident Mortality Dashboard</span>
+                    <span class="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full border border-red-500/30">Real-Time</span>
+                </h1>
+                <p class="text-xs text-slate-400">ระบบติดตามและวิเคราะห์ข้อมูลผู้เสียชีวิตจากอุบัติเหตุทางถนน (ระดับจังหวัดและรายบุคคล)</p>
+            </div>
+        </div>
+        
+        <!-- Controls & Status -->
+        <div class="flex items-center flex-wrap gap-3">
+            <!-- Real-time Status Indicator -->
+            <div class="flex items-center space-x-2 bg-slate-900/60 border border-cardBorder px-3 py-1.5 rounded-lg text-xs">
+                <span class="relative flex h-2.5 w-2.5">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </span>
+                <span id="sync-status" class="text-slate-300 font-medium">เชื่อมต่อข้อมูลแบบเรียลไทม์แล้ว</span>
+            </div>
+
+            <!-- Upload / Update CSV Trigger -->
+            <button onclick="openModal('upload-modal')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-xs font-medium transition shadow-lg shadow-blue-600/20 flex items-center gap-2">
+                <i class="fa-solid fa-cloud-arrow-up"></i> อัปเดตข้อมูล CSV
+            </button>
+
+            <!-- Export Data button -->
+            <button onclick="exportCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-xl text-xs font-medium border border-cardBorder transition flex items-center gap-2">
+                <i class="fa-solid fa-download"></i> ส่งออกข้อมูล
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 p-4 md:p-6 max-w-[1920px] mx-auto w-full space-y-6">
+
+        <!-- KPI Summary Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <!-- Total Deaths -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden">
+                <div class="absolute -right-4 -bottom-4 text-slate-800/40 text-7xl font-bold select-none pointer-events-none"><i class="fa-solid fa-user-xmark"></i></div>
+                <div>
+                    <p class="text-xs font-medium text-slate-400">ผู้เสียชีวิตทั้งหมด</p>
+                    <h3 id="kpi-total" class="text-3xl font-bold text-white mt-1">0</h3>
+                    <p class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1"><i class="fa-solid fa-arrow-trend-up"></i> อัปเดตล่าสุดทันที</p>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 text-xl">
+                    <i class="fa-solid fa-skull"></i>
+                </div>
+            </div>
+
+            <!-- Average Age -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden">
+                <div class="absolute -right-4 -bottom-4 text-slate-800/40 text-7xl font-bold select-none pointer-events-none"><i class="fa-solid fa-cake-candles"></i></div>
+                <div>
+                    <p class="text-xs font-medium text-slate-400">อายุเฉลี่ยผู้เสียชีวิต</p>
+                    <h3 id="kpi-avg-age" class="text-3xl font-bold text-white mt-1">0 <span class="text-sm font-normal text-slate-400">ปี</span></h3>
+                    <p class="text-[11px] text-slate-400 mt-1">ช่วงอายุที่พบมากที่สุด</p>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 text-xl">
+                    <i class="fa-solid fa-user-clock"></i>
+                </div>
+            </div>
+
+            <!-- Top Vehicle -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden">
+                <div class="absolute -right-4 -bottom-4 text-slate-800/40 text-7xl font-bold select-none pointer-events-none"><i class="fa-solid fa-motorcycle"></i></div>
+                <div>
+                    <p class="text-xs font-medium text-slate-400">ยานพาหนะคู่กรณีสูงสุด</p>
+                    <h3 id="kpi-top-vehicle" class="text-lg font-bold text-white mt-1 truncate max-w-[150px]" title="-">-</h3>
+                    <p id="kpi-top-vehicle-count" class="text-[11px] text-blue-400 mt-1">0 ราย</p>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-500 text-xl">
+                    <i class="fa-solid fa-motorcycle"></i>
+                </div>
+            </div>
+
+            <!-- Top Province -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden">
+                <div class="absolute -right-4 -bottom-4 text-slate-800/40 text-7xl font-bold select-none pointer-events-none"><i class="fa-solid fa-map-location-dot"></i></div>
+                <div>
+                    <p class="text-xs font-medium text-slate-400">จังหวัดที่เกิดเหตุสูงสุด</p>
+                    <h3 id="kpi-top-province" class="text-lg font-bold text-white mt-1 truncate max-w-[150px]" title="-">-</h3>
+                    <p id="kpi-top-province-count" class="text-[11px] text-red-400 mt-1">0 ราย</p>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-500 text-xl">
+                    <i class="fa-solid fa-map-pin"></i>
+                </div>
+            </div>
+
+            <!-- Helmet / Protection Rate -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden">
+                <div class="absolute -right-4 -bottom-4 text-slate-800/40 text-7xl font-bold select-none pointer-events-none"><i class="fa-solid fa-shield-halved"></i></div>
+                <div>
+                    <p class="text-xs font-medium text-slate-400">อัตราไม่สวมหมวก/เข็มขัด</p>
+                    <h3 id="kpi-safety-rate" class="text-3xl font-bold text-white mt-1">0%</h3>
+                    <p class="text-[11px] text-amber-400 mt-1">ปัจจัยเสี่ยงหลัก</p>
+                </div>
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 text-xl">
+                    <i class="fa-solid fa-shield-halved"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Map and Filters Section -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Map Container (2 cols) -->
+            <div class="lg:col-span-2 bg-cardBg border border-cardBorder rounded-2xl p-4 flex flex-col h-[550px] shadow-sm">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-3 mb-3 border-b border-cardBorder gap-3">
+                    <div>
+                        <h2 class="text-base font-semibold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-earth-asia text-blue-500"></i> แผนที่แสดงจุดเกิดเหตุและพื้นที่เสียชีวิต (ESRI Dark Gray)
+                        </h2>
+                        <p class="text-xs text-slate-400">แสดงพิกัดรายบุคคลและภาพรวมความหนาแน่นระดับจังหวัด</p>
+                    </div>
+                    <!-- Map Controls -->
+                    <div class="flex items-center gap-2 w-full sm:w-auto">
+                        <select id="province-filter" onchange="filterMapAndData()" class="bg-slate-900 border border-cardBorder text-slate-200 text-xs rounded-xl px-3 py-1.5 outline-none focus:border-blue-500 w-full sm:w-48">
+                            <option value="">ทุกจังหวัด (ภาพรวมประเทศ)</option>
+                        </select>
+                        <button onclick="resetMapView()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-xl text-xs border border-cardBorder transition" title="รีเซ็ตมุมมองแผนที่">
+                            <i class="fa-solid fa-crosshairs"></i>
+                        </button>
+                    </div>
+                </div>
+                <!-- Leaflet Map Element -->
+                <div id="map" class="flex-1 rounded-xl w-full z-10 bg-slate-950"></div>
+            </div>
+
+            <!-- Quick Individual Fatality Inspector / List -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 flex flex-col h-[550px] shadow-sm">
+                <div class="pb-3 mb-3 border-b border-cardBorder flex items-center justify-between">
+                    <div>
+                        <h2 class="text-base font-semibold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-list-ul text-amber-500"></i> รายชื่อผู้เสียชีวิตล่าสุด
+                        </h2>
+                        <p class="text-xs text-slate-400">คลิกที่รายชื่อเพื่อซูมดูพิกัดจุดเกิดเหตุบนแผนที่</p>
+                    </div>
+                    <span id="record-count" class="text-xs bg-slate-800 px-2.5 py-1 rounded-lg text-slate-300 font-mono">0 รายการ</span>
+                </div>
+                <!-- Search input -->
+                <div class="mb-3">
+                    <div class="relative">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+                        <input type="text" id="search-input" oninput="filterTableAndList()" placeholder="ค้นหาตามชื่อ, จังหวัด, ยานพาหนะ..." class="w-full bg-slate-900 border border-cardBorder rounded-xl pl-9 pr-3 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500">
+                    </div>
+                </div>
+                <!-- List items container -->
+                <div id="fatality-list" class="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Analytics Charts Grid (Covering all columns) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Chart 1: Deaths by Province -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-sm flex flex-col">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-cardBorder">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-chart-bar text-blue-400"></i> ผู้เสียชีวิตแยกตามจังหวัด (Top 10)
+                    </h3>
+                </div>
+                <div class="relative h-64 flex-1">
+                    <canvas id="chartProvince"></canvas>
+                </div>
+            </div>
+
+            <!-- Chart 2: Deaths by Vehicle Type -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-sm flex flex-col">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-cardBorder">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-chart-pie text-red-400"></i> ยานพาหนะที่เกี่ยวข้อง
+                    </h3>
+                </div>
+                <div class="relative h-64 flex-1">
+                    <canvas id="chartVehicle"></canvas>
+                </div>
+            </div>
+
+            <!-- Chart 3: Deaths by Age Group & Gender -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-sm flex flex-col">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-cardBorder">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-chart-column text-emerald-400"></i> ช่วงอายุและเพศผู้เสียชีวิต
+                    </h3>
+                </div>
+                <div class="relative h-64 flex-1">
+                    <canvas id="chartAgeGender"></canvas>
+                </div>
+            </div>
+
+            <!-- Chart 4: Deaths by Road Type -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-sm flex flex-col">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-cardBorder">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-road text-amber-400"></i> ประเภทถนนที่เกิดเหตุ
+                    </h3>
+                </div>
+                <div class="relative h-64 flex-1">
+                    <canvas id="chartRoad"></canvas>
+                </div>
+            </div>
+
+            <!-- Chart 5: Deaths by Time of Day -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-sm flex flex-col">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-cardBorder">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-clock text-purple-400"></i> ช่วงเวลาที่เกิดอุบัติเหตุ
+                    </h3>
+                </div>
+                <div class="relative h-64 flex-1">
+                    <canvas id="chartTime"></canvas>
+                </div>
+            </div>
+
+            <!-- Chart 6: Safety Equipment Usage -->
+            <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-sm flex flex-col">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-cardBorder">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-shield text-cyan-400"></i> การใช้อุปกรณ์นิรภัย (หมวก/เข็มขัด)
+                    </h3>
+                </div>
+                <div class="relative h-64 flex-1">
+                    <canvas id="chartSafety"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Data Table Section -->
+        <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-sm">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 mb-4 border-b border-cardBorder gap-3">
+                <div>
+                    <h3 class="text-base font-semibold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-table text-blue-500"></i> ตารางข้อมูลรายละเอียดผู้เสียชีวิตทั้งหมด (Data Dictionary Console)
+                    </h3>
+                    <p class="text-xs text-slate-400">ข้อมูลครบถ้วนทุกคอลัมน์ พร้อมรองรับการตรวจสอบรายบุคคล</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="addNewRecordModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl text-xs font-medium transition flex items-center gap-2">
+                        <i class="fa-solid fa-plus"></i> เพิ่มข้อมูลใหม่
+                    </button>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto custom-scrollbar">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="bg-slate-900/80 text-slate-400 border-b border-cardBorder font-semibold">
+                            <th class="p-3">ID / วันที่</th>
+                            <th class="p-3">ชื่อ-นามสกุล</th>
+                            <th class="p-3">อายุ / เพศ</th>
+                            <th class="p-3">จังหวัด / อำเภอ</th>
+                            <th class="p-3">ประเภทถนน</th>
+                            <th class="p-3">ยานพาหนะ</th>
+                            <th class="p-3">อุปกรณ์นิรภัย</th>
+                            <th class="p-3">ช่วงเวลา</th>
+                            <th class="p-3 text-center">พิกัด (Lat, Lng)</th>
+                            <th class="p-3 text-center">จัดการ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-table-body" class="divide-y divide-cardBorder/50 text-slate-300">
+                        <!-- Populated via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Upload Modal -->
+    <div id="upload-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-cardBg border border-cardBorder rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+            <div class="flex items-center justify-between pb-4 mb-4 border-b border-cardBorder">
+                <h3 class="text-base font-semibold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-file-arrow-up text-blue-500"></i> อัปเดตข้อมูลแบบเรียลไทม์ (CSV Import)
+                </h3>
+                <button onclick="closeModal('upload-modal')" class="text-slate-400 hover:text-white text-sm"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="space-y-4">
+                <p class="text-xs text-slate-300 leading-relaxed">
+                    อัปโหลดไฟล์ CSV (คอลัมน์มาตรฐาน: <code class="text-blue-400">id, date, fullname, age, gender, province, district, road_type, vehicle_type, safety_equip, time_period, lat, lng</code>) ระบบจะทำการอัปเดตแผนที่ กราฟ และฐานข้อมูลในเบราว์เซอร์ทันทีแบบเรียลไทม์
+                </p>
+                <div>
+                    <label class="block text-xs font-medium text-slate-400 mb-2">เลือกไฟล์ CSV สำหรับอัปเดตระบบ</label>
+                    <input type="file" id="csv-file-input" accept=".csv" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-500 bg-slate-900 border border-cardBorder rounded-xl cursor-pointer">
+                </div>
+                <div class="bg-blue-500/10 border border-blue-500/20 p-3 rounded-xl text-xs text-blue-300 flex items-start gap-2">
+                    <i class="fa-solid fa-circle-info mt-0.5"></i>
+                    <span>คุณสามารถดาวน์โหลดโครงสร้างไฟล์ตัวอย่าง <code class="bg-blue-950 px-1.5 py-0.5 rounded text-blue-200">datadict_death_conso.csv</code> ได้จากปุ่มด้านล่างเพื่อใช้เป็นเทมเพลตมาตรฐาน</span>
+                </div>
+            </div>
+            <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-cardBorder">
+                <button onclick="closeModal('upload-modal')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-xl text-xs font-medium transition">ยกเลิก</button>
+                <button onclick="handleCSVUpload()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-xs font-medium transition shadow-lg shadow-blue-600/20">ประมวลผลข้อมูล</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Record Modal -->
+    <div id="record-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-cardBg border border-cardBorder rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <div class="flex items-center justify-between pb-4 mb-4 border-b border-cardBorder">
+                <h3 id="record-modal-title" class="text-base font-semibold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-user-plus text-emerald-500"></i> เพิ่มข้อมูลผู้เสียชีวิตใหม่
+                </h3>
+                <button onclick="closeModal('record-modal')" class="text-slate-400 hover:text-white text-sm"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form id="record-form" onsubmit="saveRecord(event)" class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <input type="hidden" id="rec-index" value="-1">
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">วันที่เกิดเหตุ</label>
+                    <input type="date" id="rec-date" required class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">ชื่อ-นามสกุล</label>
+                    <input type="text" id="rec-name" required placeholder="เช่น นายสมชาย ใจดี" class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">อายุ (ปี)</label>
+                    <input type="number" id="rec-age" required min="1" max="120" placeholder="เช่น 35" class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">เพศ</label>
+                    <select id="rec-gender" required class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                        <option value="ชาย">ชาย</option>
+                        <option value="หญิง">หญิง</option>
+                        <option value="อื่นๆ">อื่นๆ</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">จังหวัด</label>
+                    <input type="text" id="rec-province" required placeholder="เช่น เชียงใหม่" class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">อำเภอ/เขต</label>
+                    <input type="text" id="rec-district" required placeholder="เช่น เมืองเชียงใหม่" class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">ประเภทถนน</label>
+                    <select id="rec-road" required class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                        <option value="ทางหลวงแผ่นดิน">ทางหลวงแผ่นดิน</option>
+                        <option value="ทางหลวงชนบท">ทางหลวงชนบท</option>
+                        <option value="ถนนในเมือง/เทศบาล">ถนนในเมือง/เทศบาล</option>
+                        <option value="ถนนหมู่บ้าน/อบต.">ถนนหมู่บ้าน/อบต.</option>
+                        <option value="ทางพิเศษ/มอเตอร์เวย์">ทางพิเศษ/มอเตอร์เวย์</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">ยานพาหนะคู่กรณี</label>
+                    <select id="rec-vehicle" required class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                        <option value="รถจักรยานยนต์">รถจักรยานยนต์</option>
+                        <option value="รถยนต์นั่งส่วนบุคคล">รถยนต์นั่งส่วนบุคคล</option>
+                        <option value="รถปิคอัพ/รถบรรทุกเล็ก">รถปิคอัพ/รถบรรทุกเล็ก</option>
+                        <option value="รถบรรทุก 6 ล้อขึ้นไป">รถบรรทุก 6 ล้อขึ้นไป</option>
+                        <option value="รถโดยสารประจำทาง">รถโดยสารประจำทาง</option>
+                        <option value="คนเดินเท้า">คนเดินเท้า</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">อุปกรณ์นิรภัย</label>
+                    <select id="rec-safety" required class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                        <option value="ไม่สวมหมวก/ไม่คาดเข็มขัด">ไม่สวมหมวก/ไม่คาดเข็มขัด</option>
+                        <option value="สวมหมวกนิรภัย">สวมหมวกนิรภัย</option>
+                        <option value="คาดเข็มขัดนิรภัย">คาดเข็มขัดนิรภัย</option>
+                        <option value="ไม่ระบุ">ไม่ระบุ</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">ช่วงเวลาเกิดเหตุ</label>
+                    <select id="rec-time" required class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                        <option value="00:01 - 04:00 น.">00:01 - 04:00 น.</option>
+                        <option value="04:01 - 08:00 น.">04:01 - 08:00 น.</option>
+                        <option value="08:01 - 12:00 น.">08:01 - 12:00 น.</option>
+                        <option value="12:01 - 16:00 น.">12:01 - 16:00 น.</option>
+                        <option value="16:01 - 20:00 น.">16:01 - 20:00 น.</option>
+                        <option value="20:01 - 00:00 น.">20:01 - 00:00 น.</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">ละติจูด (Latitude)</label>
+                    <input type="number" step="any" id="rec-lat" required placeholder="เช่น 18.7883" class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-400 mb-1">ลองจิจูด (Longitude)</label>
+                    <input type="number" step="any" id="rec-lng" required placeholder="เช่น 98.9853" class="w-full bg-slate-900 border border-cardBorder rounded-xl p-2.5 text-slate-200 outline-none focus:border-blue-500">
+                </div>
+                <div class="sm:col-span-2 flex items-center justify-end gap-3 mt-4 pt-4 border-t border-cardBorder">
+                    <button type="button" onclick="closeModal('record-modal')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-xl text-xs font-medium transition">ยกเลิก</button>
+                    <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-xs font-medium transition shadow-lg shadow-emerald-600/20">บันทึกข้อมูล</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Application Logic & Scripts -->
+    <script>
+        // Default Mock Dataset matching datadict_death_conso.csv standards across Thailand
+        let accidentData = [
+            { id: "ACC-001", date: "2026-04-01", fullname: "นายสมชาย ใจดี", age: 34, gender: "ชาย", province: "เชียงใหม่", district: "เมืองเชียงใหม่", road_type: "ถนนในเมือง/เทศบาล", vehicle_type: "รถจักรยานยนต์", safety_equip: "ไม่สวมหมวก/ไม่คาดเข็มขัด", time_period: "16:01 - 20:00 น.", lat: 18.7883, lng: 98.9853 },
+            { id: "ACC-002", date: "2026-04-02", fullname: "นางสาวสมหญิง รักสงบ", age: 28, gender: "หญิง", province: "กรุงเทพมหานคร", district: "ปทุมวัน", road_type: "ทางหลวงแผ่นดิน", vehicle_type: "รถยนต์นั่งส่วนบุคคล", safety_equip: "คาดเข็มขัดนิรภัย", time_period: "00:01 - 04:00 น.", lat: 13.7466, lng: 100.5391 },
+            { id: "ACC-003", date: "2026-04-03", fullname: "นายประเสริฐ มั่นคง", age: 45, gender: "ชาย", province: "ขอนแก่น", district: "เมืองขอนแก่น", road_type: "ทางหลวงชนบท", vehicle_type: "รถจักรยานยนต์", safety_equip: "ไม่สวมหมวก/ไม่คาดเข็มขัด", time_period: "20:01 - 00:00 น.", lat: 16.4322, lng: 102.8236 },
+            { id: "ACC-004", date: "2026-04-03", fullname: "นายวิชัย กล้าหาญ", age: 52, gender: "ชาย", province: "นครราชสีมา", district: "เมืองนครราชสีมา", road_type: "ทางหลวงแผ่นดิน", vehicle_type: "รถปิคอัพ/รถบรรทุกเล็ก", safety_equip: "คาดเข็มขัดนิรภัย", time_period: "12:01 - 16:00 น.", lat: 14.9799, lng: 102.0977 },
+            { id: "ACC-005", date: "2026-04-04", fullname: "นางนงnart ศรีสุวรรณ", age: 61, gender: "หญิง", province: "สงขหา", district: "หาดใหญ่", road_type: "ถนนหมู่บ้าน/อบต.", vehicle_type: "รถจักรยานยนต์", safety_equip: "สวมหมวกนิรภัย", time_period: "08:01 - 12:00 น.", lat: 7.0084, lng: 100.4747 },
+            { id: "ACC-006", date: "2026-04-04", fullname: "นายอนุชา สุข ี", age: 22, gender: "ชาย", province: "เชียงใหม่", district: "สันทราย", road_type: "ถนนในเมือง/เทศบาล", vehicle_type: "รถจักรยานยนต์", safety_equip: "ไม่สวมหมวก/ไม่คาดเข็มขัด", time_period: "20:01 - 00:00 น.", lat: 18.8792, lng: 99.0142 },
+            { id: "ACC-007", date: "2026-04-05", fullname: "นายกิตติ ทวีทรัพย์", age: 39, gender: "ชาย", province: "ชลบุรี", district: "บางละมุง", road_type: "ทางพิเศษ/มอเตอร์เวย์", vehicle_type: "รถยนต์นั่งส่วนบุคคล", safety_equip: "คาดเข็มขัดนิรภัย", time_period: "04:01 - 08:00 น.", lat: 12.9236, lng: 100.8825 },
+            { id: "ACC-008", date: "2026-04-05", fullname: "นางสาวดวงใจ รุ่งเรือง", age: 29, gender: "หญิง", province: "ภูเก็ต", district: "กระทู้", road_type: "ถนนในเมือง/เทศบาล", vehicle_type: "รถจักรยานยนต์", safety_equip: "ไม่สวมหมวก/ไม่คาดเข็มขัด", time_period: "16:01 - 20:00 น.", lat: 7.9103, lng: 98.3325 },
+            { id: "ACC-009", date: "2026-04-06", fullname: "นายธนวัฒน์ พรมมา", age: 48, gender: "ชาย", province: "ขอนแก่น", district: "น้ำพอง", road_type: "ทางหลวงแผ่นดิน", vehicle_type: "รถบรรทุก 6 ล้อขึ้นไป", safety_equip: "ไม่ระบุ", time_period: "12:01 - 16:00 น.", lat: 16.6975, lng: 102.8468 },
+            { id: "ACC-010", date: "2026-04-06", fullname: "นายสุรศักดิ์ คงคา", age: 33, gender: "ชาย", province: "กรุงเทพมหานคร", district: "จตุจักร", road_type: "ทางพิเศษ/มอเตอร์เวย์", vehicle_type: "รถยนต์นั่งส่วนบุคคล", safety_equip: "คาดเข็มขัดนิรภัย", time_period: "00:01 - 04:00 น.", lat: 13.8222, lng: 100.5654 }
+        ];
+
+        let map;
+        let markersLayer;
+        let charts = {};
+
+        // Initialize Map with ESRI World Dark Gray Canvas
+        function initMap() {
+            // Center around Thailand
+            map = L.map('map', {
+                center: [13.7367, 100.5231],
+                zoom: 6,
+                zoomControl: false
+            });
+
+            // Add Zoom Control to top-right
+            L.control.zoom({ position: 'topright' }).addTo(map);
+
+            // ESRI World Dark Gray Canvas Tile Layer
+            L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
+                maxZoom: 16,
+                minZoom: 5
+            }).addTo(map);
+
+            markersLayer = L.layerGroup().addTo(map);
+        }
+
+        // Render Map Markers
+        function updateMapMarkers(filteredData) {
+            markersLayer.clearLayers();
+            
+            if (filteredData.length === 0) return;
+
+            const bounds = [];
+
+            filteredData.forEach(item => {
+                if (item.lat && item.lng) {
+                    const latLng = [item.lat, item.lng];
+                    bounds.push(latLng);
+
+                    // Custom marker color based on safety equipment
+                    const isUnsafe = item.safety_equip.includes("ไม่สวม") || item.safety_equip.includes("ไม่ระบุ");
+                    const markerColor = isUnsafe ? '#ef4444' : '#3b82f6';
+
+                    const customIcon = L.divIcon({
+                        className: 'custom-div-icon',
+                        html: `<div style="background-color: ${markerColor}; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #ffffff; box-shadow: 0 0 10px ${markerColor};"></div>`,
+                        iconSize: [14, 14],
+                        iconAnchor: [7, 7]
+                    });
+
+                    const marker = L.marker(latLng, { icon: customIcon });
+
+                    const popupContent = `
+                        <div class="p-1 space-y-1">
+                            <div class="font-bold text-sm text-white flex items-center gap-1.5">
+                                <i class="fa-solid fa-skull text-red-400"></i> ${item.fullname} (${item.age} ปี / ${item.gender})
+                            </div>
+                            <div class="text-xs text-slate-300 space-y-0.5 border-t border-slate-700 pt-1 mt-1">
+                                <p><strong>จังหวัด:</strong> ${item.province} (${item.district})</p>
+                                <p><strong>ยานพาหนะ:</strong> ${item.vehicle_type}</p>
+                                <p><strong>ถนน:</strong> ${item.road_type}</p>
+                                <p><strong>อุปกรณ์นิรภัย:</strong> <span class="${isUnsafe ? 'text-red-400 font-semibold' : 'text-emerald-400'}">${item.safety_equip}</span></p>
+                                <p><strong>เวลา:</strong> ${item.time_period} (${item.date})</p>
+                            </div>
+                        </div>
+                    `;
+
+                    marker.bindPopup(popupContent);
+                    markersLayer.addLayer(marker);
+                }
+            });
+
+            if (bounds.length > 0 && document.getElementById('province-filter').value) {
+                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
+            }
+        }
+
+        function resetMapView() {
+            map.setView([13.7367, 100.5231], 6);
+        }
+
+        // Populate Province Dropdown Filter
+        function updateProvinceDropdown() {
+            const select = document.getElementById('province-filter');
+            const currentValue = select.value;
+            
+            // Get unique provinces
+            const provinces = [...new Set(accidentData.map(d => d.province))].sort();
+
+            select.innerHTML = '<option value="">ทุกจังหวัด (ภาพรวมประเทศ)</option>';
+            provinces.forEach(prov => {
+                const opt = document.createElement('option');
+                opt.value = prov;
+                opt.textContent = prov;
+                if (prov === currentValue) opt.selected = true;
+                select.appendChild(opt);
+            });
+        }
+
+        // Calculate and Render KPIs
+        function updateKPIs(data) {
+            const total = data.length;
+            document.getElementById('kpi-total').textContent = total.toLocaleString();
+
+            if (total === 0) {
+                document.getElementById('kpi-avg-age').textContent = '0 ปี';
+                document.getElementById('kpi-top-vehicle').textContent = '-';
+                document.getElementById('kpi-top-vehicle-count').textContent = '0 ราย';
+                document.getElementById('kpi-top-province').textContent = '-';
+                document.getElementById('kpi-top-province-count').textContent = '0 ราย';
+                document.getElementById('kpi-safety-rate').textContent = '0%';
+                return;
+            }
+
+            // Average Age
+            const totalAge = data.reduce((sum, d) => sum + Number(d.age), 0);
+            const avgAge = Math.round(totalAge / total);
+            document.getElementById('kpi-avg-age').innerHTML = `${avgAge} <span class="text-sm font-normal text-slate-400">ปี</span>`;
+
+            // Top Vehicle
+            const vehicleCounts = {};
+            data.forEach(d => { vehicleCounts[d.vehicle_type] = (vehicleCounts[d.vehicle_type] || 0) + 1; });
+            const topVehicle = Object.keys(vehicleCounts).reduce((a, b) => vehicleCounts[a] > vehicleCounts[b] ? a : b, '-');
+            document.getElementById('kpi-top-vehicle').textContent = topVehicle;
+            document.getElementById('kpi-top-vehicle').title = topVehicle;
+            document.getElementById('kpi-top-vehicle-count').textContent = `${vehicleCounts[topVehicle] || 0} ราย`;
+
+            // Top Province
+            const provCounts = {};
+            data.forEach(d => { provCounts[d.province] = (provCounts[d.province] || 0) + 1; });
+            const topProv = Object.keys(provCounts).reduce((a, b) => provCounts[a] > provCounts[b] ? a : b, '-');
+            document.getElementById('kpi-top-province').textContent = topProv;
+            document.getElementById('kpi-top-province').title = topProv;
+            document.getElementById('kpi-top-province-count').textContent = `${provCounts[topProv] || 0} ราย`;
+
+            // Safety Equipment Failure Rate (No Helmet / No Seatbelt / Unspecified)
+            const unsafeCount = data.filter(d => d.safety_equip.includes("ไม่สวม") || d.safety_equip.includes("ไม่ระบุ")).length;
+            const safetyRate = Math.round((unsafeCount / total) * 100);
+            document.getElementById('kpi-safety-rate').textContent = `${safetyRate}%`;
+        }
+
+        // Render Fatality List & Table
+        function renderListsAndTable(data) {
+            const listContainer = document.getElementById('fatality-list');
+            const tableBody = document.getElementById('data-table-body');
+            const recordCount = document.getElementById('record-count');
+
+            listContainer.innerHTML = '';
+            tableBody.innerHTML = '';
+            recordCount.textContent = `${data.length} รายการ`;
+
+            if (data.length === 0) {
+                listContainer.innerHTML = '<div class="text-center text-slate-500 py-8 text-xs">ไม่พบข้อมูลผู้เสียชีวิต</div>';
+                tableBody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-6 text-xs">ไม่พบข้อมูลผู้เสียชีวิต</td></tr>';
+                return;
+            }
+
+            // Sort by date descending
+            const sortedData = [...data].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            sortedData.forEach((item, index) => {
+                const isUnsafe = item.safety_equip.includes("ไม่สวม") || item.safety_equip.includes("ไม่ระบุ");
+
+                // Render Sidebar List Item
+                const card = document.createElement('div');
+                card.className = "bg-slate-900/60 hover:bg-slate-900 border border-cardBorder hover:border-blue-500/50 p-3 rounded-xl cursor-pointer transition flex items-center justify-between gap-2";
+                card.onclick = () => {
+                    if (item.lat && item.lng) {
+                        map.setView([item.lat, item.lng], 14);
+                        // Open popup if marker found
+                        markersLayer.eachLayer(layer => {
+                            if (layer.getLatLng().lat === item.lat && layer.getLatLng().lng === item.lng) {
+                                layer.openPopup();
+                            }
+                        });
+                    }
+                };
+                card.innerHTML = `
+                    <div class="flex items-center space-x-3 overflow-hidden">
+                        <div class="w-9 h-9 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 shrink-0">
+                            <i class="fa-solid fa-user-xmark text-xs"></i>
+                        </div>
+                        <div class="truncate">
+                            <h4 class="text-xs font-semibold text-white truncate">${item.fullname} (${item.age} ปี)</h4>
+                            <p class="text-[11px] text-slate-400 truncate">${item.province} • ${item.vehicle_type}</p>
+                        </div>
+                    </div>
+                    <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-md shrink-0">${item.date}</span>
+                `;
+                listContainer.appendChild(card);
+
+                // Render Table Row
+                const row = document.createElement('tr');
+                row.className = "hover:bg-slate-900/50 transition border-b border-cardBorder/30";
+                row.innerHTML = `
+                    <td class="p-3 font-mono text-slate-400">${item.id}<br><span class="text-[10px] text-slate-500">${item.date}</span></td>
+                    <td class="p-3 font-medium text-white">${item.fullname}</td>
+                    <td class="p-3">${item.age} ปี (${item.gender})</td>
+                    <td class="p-3">${item.province}<br><span class="text-[10px] text-slate-400">${item.district}</span></td>
+                    <td class="p-3"><span class="bg-slate-800 px-2 py-0.5 rounded text-[11px]">${item.road_type}</span></td>
+                    <td class="p-3 font-medium text-blue-400">${item.vehicle_type}</td>
+                    <td class="p-3"><span class="${isUnsafe ? 'text-red-400' : 'text-emerald-400'}">${item.safety_equip}</span></td>
+                    <td class="p-3 text-slate-400">${item.time_period}</td>
+                    <td class="p-3 text-center font-mono text-[11px] text-slate-400">${item.lat}, ${item.lng}</td>
+                    <td class="p-3 text-center">
+                        <div class="flex items-center justify-center gap-1.5">
+                            <button onclick="editRecord('${item.id}')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 p-1.5 rounded-lg transition" title="แก้ไข"><i class="fa-solid fa-pen text-[10px]"></i></button>
+                            <button onclick="deleteRecord('${item.id}')" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 p-1.5 rounded-lg transition" title="ลบ"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                        </div>
+                    </td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        // Render and Update All Chart.js Visualizations
+        function updateCharts(data) {
+            // Common Chart Dark Theme Defaults
+            Chart.defaults.color = '#94a3b8';
+            Chart.defaults.borderColor = '#1e293b';
+            Chart.defaults.font.family = 'Prompt, sans-serif';
+
+            // 1. Province Chart (Top 10)
+            const provCounts = {};
+            data.forEach(d => { provCounts[d.province] = (provCounts[d.province] || 0) + 1; });
+            const sortedProvinces = Object.entries(provCounts).sort((a,b) => b[1] - a[1]).slice(0, 10);
+            
+            renderChart('chartProvince', 'bar', {
+                labels: sortedProvinces.map(p => p[0]),
+                datasets: [{
+                    label: 'จำนวนผู้เสียชีวิต (ราย)',
+                    data: sortedProvinces.map(p => p[1]),
+                    backgroundColor: '#3b82f6',
+                    borderRadius: 6
+                }]
+            }, { indexAxis: 'y', plugins: { legend: { display: false } } });
+
+            // 2. Vehicle Chart (Pie / Doughnut)
+            const vehCounts = {};
+            data.forEach(d => { vehCounts[d.vehicle_type] = (vehCounts[d.vehicle_type] || 0) + 1; });
+            
+            renderChart('chartVehicle', 'doughnut', {
+                labels: Object.keys(vehCounts),
+                datasets: [{
+                    data: Object.values(vehCounts),
+                    backgroundColor: ['#ef4444', '#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'],
+                    borderWidth: 0
+                }]
+            }, { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } });
+
+            // 3. Age & Gender Group
+            const ageGroups = { '0-15 ปี': 0, '16-25 ปี': 0, '26-40 ปี': 0, '41-60 ปี': 0, '61 ปีขึ้นไป': 0 };
+            data.forEach(d => {
+                const age = Number(d.age);
+                if (age <= 15) ageGroups['0-15 ปี']++;
+                else if (age <= 25) ageGroups['16-25 ปี']++;
+                else if (age <= 40) ageGroups['26-40 ปี']++;
+                else if (age <= 60) ageGroups['41-60 ปี']++;
+                else ageGroups['61 ปีขึ้นไป']++;
+            });
+
+            renderChart('chartAgeGender', 'bar', {
+                labels: Object.keys(ageGroups),
+                datasets: [{
+                    label: 'ผู้เสียชีวิต (ราย)',
+                    data: Object.values(ageGroups),
+                    backgroundColor: '#10b981',
+                    borderRadius: 6
+                }]
+            }, { plugins: { legend: { display: false } } });
+
+            // 4. Road Type
+            const roadCounts = {};
+            data.forEach(d => { roadCounts[d.road_type] = (roadCounts[d.road_type] || 0) + 1; });
+
+            renderChart('chartRoad', 'bar', {
+                labels: Object.keys(roadCounts),
+                datasets: [{
+                    label: 'จำนวน',
+                    data: Object.values(roadCounts),
+                    backgroundColor: '#f59e0b',
+                    borderRadius: 6
+                }]
+            }, { plugins: { legend: { display: false } } });
+
+            // 5. Time Period
+            const timeCounts = {};
+            data.forEach(d => { timeCounts[d.time_period] = (timeCounts[d.time_period] || 0) + 1; });
+
+            renderChart('chartTime', 'line', {
+                labels: Object.keys(timeCounts).sort(),
+                datasets: [{
+                    label: 'จำนวนผู้เสียชีวิต',
+                    data: Object.keys(timeCounts).sort().map(k => timeCounts[k]),
+                    borderColor: '#8b5cf6',
+                    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            }, { plugins: { legend: { display: false } } });
+
+            // 6. Safety Equipment
+            const safetyCounts = {};
+            data.forEach(d => { safetyCounts[d.safety_equip] = (safetyCounts[d.safety_equip] || 0) + 1; });
+
+            renderChart('chartSafety', 'pie', {
+                labels: Object.keys(safetyCounts),
+                datasets: [{
+                    data: Object.values(safetyCounts),
+                    backgroundColor: ['#ef4444', '#10b981', '#3b82f6', '#64748b'],
+                    borderWidth: 0
+                }]
+            }, { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } } });
+        }
+
+        // Helper to destroy and re-create Chart instances
+        function renderChart(canvasId, type, data, options = {}) {
+            if (charts[canvasId]) {
+                charts[canvasId].destroy();
+            }
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            charts[canvasId] = new Chart(ctx, {
+                type: type,
+                data: data,
+                options: Object.assign({
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: type !== 'pie' && type !== 'doughnut' ? {
+                        y: { beginAtZero: true, grid: { color: '#1e293b' } },
+                        x: { grid: { display: false } }
+                    } : {}
+                }, options)
+            });
+        }
+
+        // Filter and Search Engine
+        function filterMapAndData() {
+            const selectedProv = document.getElementById('province-filter').value;
+            const searchQuery = document.getElementById('search-input').value.toLowerCase();
+
+            let filtered = accidentData;
+
+            if (selectedProv) {
+                filtered = filtered.filter(d => d.province === selectedProv);
+            }
+
+            if (searchQuery) {
+                filtered = filtered.filter(d => 
+                    d.fullname.toLowerCase().includes(searchQuery) ||
+                    d.province.toLowerCase().includes(searchQuery) ||
+                    d.district.toLowerCase().includes(searchQuery) ||
+                    d.vehicle_type.toLowerCase().includes(searchQuery) ||
+                    d.road_type.toLowerCase().includes(searchQuery)
+                );
+            }
+
+            updateKPIs(filtered);
+            updateMapMarkers(filtered);
+            renderListsAndTable(filtered);
+            updateCharts(filtered);
+        }
+
+        function filterTableAndList() {
+            filterMapAndData();
+        }
+
+        // Modal Controls
+        function openModal(id) {
+            document.getElementById(id).classList.remove('hidden');
+            document.getElementById(id).classList.add('flex');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('flex');
+            document.getElementById(id).classList.add('hidden');
+        }
+
+        // Add / Edit Record Handling
+        function addNewRecordModal() {
+            document.getElementById('record-modal-title').innerHTML = '<i class="fa-solid fa-user-plus text-emerald-500"></i> เพิ่มข้อมูลผู้เสียชีวิตใหม่';
+            document.getElementById('record-form').reset();
+            document.getElementById('rec-index').value = '-1';
+            // Default today date
+            document.getElementById('rec-date').value = new Date().toISOString().split('T')[0];
+            openModal('record-modal');
+        }
+
+        function editRecord(id) {
+            const item = accidentData.find(d => d.id === id);
+            if (!item) return;
+
+            document.getElementById('record-modal-title').innerHTML = '<i class="fa-solid fa-pen text-blue-500"></i> แก้ไขข้อมูลผู้เสียชีวิต';
+            document.getElementById('rec-index').value = item.id;
+            document.getElementById('rec-date').value = item.date;
+            document.getElementById('rec-name').value = item.fullname;
+            document.getElementById('rec-age').value = item.age;
+            document.getElementById('rec-gender').value = item.gender;
+            document.getElementById('rec-province').value = item.province;
+            document.getElementById('rec-district').value = item.district;
+            document.getElementById('rec-road').value = item.road_type;
+            document.getElementById('rec-vehicle').value = item.vehicle_type;
+            document.getElementById('rec-safety').value = item.safety_equip;
+            document.getElementById('rec-time').value = item.time_period;
+            document.getElementById('rec-lat').value = item.lat;
+            document.getElementById('rec-lng').value = item.lng;
+
+            openModal('record-modal');
+        }
+
+        function saveRecord(e) {
+            e.preventDefault();
+            const idVal = document.getElementById('rec-index').value;
+            
+            const newItem = {
+                id: idVal === '-1' ? `ACC-${String(accidentData.length + 1).padStart(3, '0')}` : idVal,
+                date: document.getElementById('rec-date').value,
+                fullname: document.getElementById('rec-name').value,
+                age: Number(document.getElementById('rec-age').value),
+                gender: document.getElementById('rec-gender').value,
+                province: document.getElementById('rec-province').value,
+                district: document.getElementById('rec-district').value,
+                road_type: document.getElementById('rec-road').value,
+                vehicle_type: document.getElementById('rec-vehicle').value,
+                safety_equip: document.getElementById('rec-safety').value,
+                time_period: document.getElementById('rec-time').value,
+                lat: parseFloat(document.getElementById('rec-lat').value),
+                lng: parseFloat(document.getElementById('rec-lng').value)
+            };
+
+            if (idVal === '-1') {
+                accidentData.unshift(newItem);
+            } else {
+                const idx = accidentData.findIndex(d => d.id === idVal);
+                if (idx !== -1) accidentData[idx] = newItem;
+            }
+
+            closeModal('record-modal');
+            updateProvinceDropdown();
+            filterMapAndData();
+            showSyncNotification("บันทึกและอัปเดตข้อมูลแบบเรียลไทม์สำเร็จ");
+        }
+
+        function deleteRecord(id) {
+            if (confirm("คุณต้องการลบข้อมูลรายการนี้ใช่หรือไม่?")) {
+                accidentData = accidentData.filter(d => d.id !== id);
+                updateProvinceDropdown();
+                filterMapAndData();
+                showSyncNotification("ลบข้อมูลสำเร็จ");
+            }
+        }
+
+        // CSV Real-time Upload & Processing
+        function handleCSVUpload() {
+            const fileInput = document.getElementById('csv-file-input');
+            if (fileInput.files.length === 0) {
+                alert("กรุณาเลือกไฟล์ CSV");
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const lines = text.split('\n');
+                if (lines.length < 2) {
+                    alert("ไฟล์ CSV ไม่ถูกต้องหรือไม่มีข้อมูล");
+                    return;
+                }
+
+                const parsedData = [];
+                // Skip header line
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+                    const cols = line.split(',');
+                    if (cols.length >= 13) {
+                        parsedData.push({
+                            id: cols[0].trim(),
+                            date: cols[1].trim(),
+                            fullname: cols[2].trim(),
+                            age: Number(cols[3].trim()) || 30,
+                            gender: cols[4].trim(),
+                            province: cols[5].trim(),
+                            district: cols[6].trim(),
+                            road_type: cols[7].trim(),
+                            vehicle_type: cols[8].trim(),
+                            safety_equip: cols[9].trim(),
+                            time_period: cols[10].trim(),
+                            lat: parseFloat(cols[11].trim()) || 13.73,
+                            lng: parseFloat(cols[12].trim()) || 100.52
+                        });
+                    }
+                }
+
+                if (parsedData.length > 0) {
+                    accidentData = parsedData;
+                    updateProvinceDropdown();
+                    filterMapAndData();
+                    closeModal('upload-modal');
+                    showSyncNotification(`อัปเดตข้อมูลจาก CSV สำเร็จ (${parsedData.length} รายการ)`);
+                } else {
+                    alert("ไม่สามารถแปลงข้อมูล CSV ได้ กรุณาตรวจสอบรูปแบบคอลัมน์");
+                }
+            };
+
+            reader.readAsText(file, 'UTF-8');
+        }
+
+        // Export CSV Function for GitHub Pages & Real-time Sync
+        function exportCSV() {
+            let csvContent = "id,date,fullname,age,gender,province,district,road_type,vehicle_type,safety_equip,time_period,lat,lng\n";
+            accidentData.forEach(d => {
+                csvContent += `${d.id},${d.date},"${d.fullname}",${d.age},${d.gender},${d.province},${d.district},${d.road_type},${d.vehicle_type},${d.safety_equip},${d.time_period},${d.lat},${d.lng}\n`;
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.setAttribute('href', url);
+            a.setAttribute('download', 'datadict_death_conso.csv');
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showSyncNotification("ดาวน์โหลดไฟล์ datadict_death_conso.csv สำเร็จ");
+        }
+
+        // Status Notification Toast
+        function showSyncNotification(message) {
+            const statusEl = document.getElementById('sync-status');
+            const originalText = statusEl.textContent;
+            statusEl.textContent = message;
+            statusEl.classList.add('text-emerald-400', 'font-bold');
+            setTimeout(() => {
+                statusEl.textContent = originalText;
+                statusEl.classList.remove('text-emerald-400', 'font-bold');
+            }, 4000);
+        }
+
+        // Initialize on load
+        window.onload = function() {
+            initMap();
+            updateProvinceDropdown();
+            filterMapAndData();
+        };
+    </script>
+</body>
+</html>
